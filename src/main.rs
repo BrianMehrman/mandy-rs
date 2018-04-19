@@ -1,8 +1,10 @@
+#[macro_use]
 extern crate clap;
 extern crate find_folder;
 extern crate image;
 extern crate ocl;
 
+use clap::{Arg, App, AppSettings};
 use ocl::{flags, Buffer, Context, Queue, Device, Platform, Program, Kernel, Image};
 use ocl::enums::{ImageChannelOrder, ImageChannelDataType, MemObjectType};
 use find_folder::Search;
@@ -10,13 +12,23 @@ use find_folder::Search;
 //#[allow(dead_code)]
 fn run() -> ocl::Result<()> {
 
-    // initial values
-    let width = 1024u32;
-    let height = 600u32;
-    let mid_x = 0.75f64;
-    let mid_y = 0.0f64;
-    let zoom = 1.0f64;
-    let max = 25;
+    let matches = App::new("mandy")
+        .version("v0.1")
+        .setting(AppSettings::AllowNegativeNumbers)
+        .arg(Arg::with_name("width").short("w").takes_value(true))
+        .arg(Arg::with_name("height").short("h").takes_value(true))
+        .arg(Arg::with_name("mid_x").short("x").takes_value(true))
+        .arg(Arg::with_name("mid_y").short("y").takes_value(true))
+        .arg(Arg::with_name("zoom").short("z").takes_value(true))
+        .arg(Arg::with_name("max").short("m").takes_value(true))
+        .get_matches();
+
+    let width = value_t!(matches, "width", u32).unwrap_or(1024);
+    let height = value_t!(matches, "height", u32).unwrap_or(600);
+    let mid_x = value_t!(matches, "mid_x", f64).unwrap_or(0.75);
+    let mid_y = value_t!(matches, "mid_y", f64).unwrap_or(0.0);
+    let zoom = value_t!(matches, "zoom", f64).unwrap_or(1.0);
+    let max = value_t!(matches, "max", u32).unwrap_or(25);
 
     let dims = (width * height) as usize;
     let mut x_vec = vec![0.0f64; dims];
