@@ -72,7 +72,10 @@ fn run() -> ocl::Result<()> {
             .build().unwrap()
     };
 
-    let kernel = Kernel::builder().program(&program).queue(queue.clone()).global_work_size(dims)
+    let kernel = Kernel::builder()
+        .program(&program)
+        .queue(queue.clone())
+        .global_work_size(dims)
         .name("mandy").arg(&x_buffer).arg(&y_buffer).arg(&max).arg(&width).arg(&dst_image)
         .build()?;
 
@@ -99,13 +102,7 @@ fn run() -> ocl::Result<()> {
         y += step_y;
     }
 
-
-    println!("running kernel");
-    unsafe {
-        kernel.cmd().queue(&queue).global_work_offset(kernel.default_global_work_offset()).global_work_size(dims).local_work_size(kernel.default_local_work_size()).enq()?;
-    }
-
-    println!("read into image");
+    unsafe { kernel.enq()? }
     dst_image.read(&mut img).enq().unwrap();
 
     let mut path = std::env::current_dir().unwrap();
