@@ -1,0 +1,10 @@
+[package]
+name = "mandy"
+version = "0.1.0"
+authors = ["Scott Pierce <ddrscott@gmail.com>"]
+
+[dependencies]
+clap = "2.31.2"
+find_folder = "*"
+image = "*"
+ocl = "0.18.0"
