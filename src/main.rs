@@ -8,7 +8,19 @@ use ocl::enums::{ImageChannelOrder, ImageChannelDataType, MemObjectType};
 use find_folder::Search;
 
 //#[allow(dead_code)]
-fn trivial_exploded() -> ocl::Result<()> {
+fn run() -> ocl::Result<()> {
+
+    // initial values
+    let width = 1024u32;
+    let height = 600u32;
+    let mid_x = 0.75f64;
+    let mid_y = 0.0f64;
+    let zoom = 1.0f64;
+    let max = 25;
+
+    let dims = (width * height) as usize;
+    let mut x_vec = vec![0.0f64; dims];
+    let mut y_vec = vec![0.0f64; dims];
 
     let kernel_src = Search::ParentsThenKids(3, 3)
         .for_folder("kernel")
@@ -29,33 +41,45 @@ fn trivial_exploded() -> ocl::Result<()> {
         .build(&context)?;
     let queue = Queue::new(&context, device, None)?;
 
-    let width = 1920u32;
-    let height = 1080u32;
-    let mid_x = 0.75f64;
-    let mid_y = 0.0f64;
-    let zoom = 1.0f64;
-    let max = 50;
-
-    let mut img = image::ImageBuffer::from_pixel(width, height, image::Rgba([0, 0, 0, 255u8]));// generate_image(width, height);
-    let dims = (width * height) as usize;
-
-    let dst_image = Image::<u8>::builder()
-        .channel_order(ImageChannelOrder::Rgba)
-        .channel_data_type(ImageChannelDataType::UnormInt8)
-        .image_type(MemObjectType::Image2d)
-        .dims(&img.dimensions())
-        .flags(ocl::flags::MEM_WRITE_ONLY | ocl::flags::MEM_HOST_READ_ONLY | ocl::flags::MEM_COPY_HOST_PTR)
-        .copy_host_slice(&img)
+    let x_buffer = unsafe { 
+        Buffer::<f64>::builder()
         .queue(queue.clone())
-        .build().unwrap();
+        .flags(flags::MEM_READ_WRITE)
+        .len(dims)
+        .use_host_slice(&x_vec)
+        .build().unwrap()
+    };
 
-    let mut x_vec = vec![0.0f64; dims];
-    let mut y_vec = vec![0.0f64; dims];
+    let y_buffer = unsafe { 
+        Buffer::<f64>::builder()
+            .queue(queue.clone())
+            .flags(flags::MEM_READ_WRITE)
+            .len(dims)
+            .use_host_slice(&y_vec)
+            .build()
+            .unwrap()
+    };
+
+    let mut img = image::ImageBuffer::from_pixel(width, height, image::Rgba([0, 0, 0, 255u8]));
+    let dst_image = unsafe {
+        Image::<u8>::builder()
+            .channel_order(ImageChannelOrder::Rgba)
+            .channel_data_type(ImageChannelDataType::UnormInt8)
+            .image_type(MemObjectType::Image2d)
+            .dims(&img.dimensions())
+            .use_host_slice(&img)
+            .queue(queue.clone())
+            .build().unwrap()
+    };
+
+    let kernel = Kernel::builder().program(&program).queue(queue.clone()).global_work_size(dims)
+        .name("mandy").arg(&x_buffer).arg(&y_buffer).arg(&max).arg(&width).arg(&dst_image)
+        .build()?;
 
     // fill x/y to Mandelbrot coordinates
-    let scale_h = height as f64 * 0.5 / height as f64 * 2.0 * zoom;
+    let height_vs_width = height as f64 / width as f64;
+    let scale_h = height as f64 * 0.5 / height as f64 * 3.5 * height_vs_width * zoom;
     let scale_w =  width as f64 * 0.5 /  width as f64 * 3.5 * zoom;
-
     let left = -scale_w - mid_x;
     let right = scale_w - mid_x;
     let top = -scale_h - mid_y;
@@ -75,42 +99,10 @@ fn trivial_exploded() -> ocl::Result<()> {
         y += step_y;
     }
 
-    let x_buffer = Buffer::<f64>::builder()
-        .queue(queue.clone())
-        .flags(flags::MEM_READ_WRITE)
-        .len(dims)
-        .copy_host_slice(&x_vec)
-        .build()?;
 
-    let y_buffer = Buffer::<f64>::builder()
-        .queue(queue.clone())
-        .flags(flags::MEM_READ_WRITE)
-        .len(dims)
-        .copy_host_slice(&y_vec)
-        .build()?;
-
-    // (3) Create a kernel with arguments matching those in the source above:
-    let kernel = Kernel::builder()
-        .program(&program)
-        .name("mandy")
-        .queue(queue.clone())
-        .global_work_size(dims)
-        .arg(&x_buffer)
-        .arg(&y_buffer)
-        .arg(&max)
-        .arg(&width)
-        .arg(&dst_image)
-        .build()?;
-
-    // (4) Run the kernel (default parameters shown for demonstration purposes):
     println!("running kernel");
     unsafe {
-        kernel.cmd()
-            .queue(&queue)
-            .global_work_offset(kernel.default_global_work_offset())
-            .global_work_size(dims)
-            .local_work_size(kernel.default_local_work_size())
-            .enq()?;
+        kernel.cmd().queue(&queue).global_work_offset(kernel.default_global_work_offset()).global_work_size(dims).local_work_size(kernel.default_local_work_size()).enq()?;
     }
 
     println!("read into image");
@@ -124,5 +116,5 @@ fn trivial_exploded() -> ocl::Result<()> {
 }
 
 fn main() {
-    trivial_exploded().unwrap();
+    run().unwrap();
 }
