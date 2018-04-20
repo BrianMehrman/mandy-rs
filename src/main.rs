@@ -3,11 +3,18 @@ extern crate clap;
 extern crate find_folder;
 extern crate image;
 extern crate ocl;
+extern crate sdl2;
+
 
 use clap::{Arg, App, AppSettings};
-use ocl::{flags, Buffer, Context, Queue, Device, Platform, Program, Kernel, Image};
+use ocl::{Buffer, Context, Queue, Device, Platform, Program, Kernel, Image};
 use ocl::enums::{ImageChannelOrder, ImageChannelDataType, MemObjectType};
 use find_folder::Search;
+use sdl2::event::Event;
+use sdl2::pixels::Color;
+use sdl2::rect::Rect;
+use sdl2::keyboard::Keycode;
+use std::time::Duration;
 
 //#[allow(dead_code)]
 fn run() -> ocl::Result<()> {
@@ -25,10 +32,10 @@ fn run() -> ocl::Result<()> {
 
     let width = value_t!(matches, "width", u32).unwrap_or(1024);
     let height = value_t!(matches, "height", u32).unwrap_or(600);
-    let mid_x = value_t!(matches, "mid_x", f64).unwrap_or(0.75);
-    let mid_y = value_t!(matches, "mid_y", f64).unwrap_or(0.0);
-    let zoom = value_t!(matches, "zoom", f64).unwrap_or(1.0);
-    let max = value_t!(matches, "max", u32).unwrap_or(25);
+    let mut mid_x = value_t!(matches, "mid_x", f64).unwrap_or(0.75);
+    let mut mid_y = value_t!(matches, "mid_y", f64).unwrap_or(0.0);
+    let mut zoom = value_t!(matches, "zoom", f64).unwrap_or(1.0);
+    let mut max = value_t!(matches, "max", u32).unwrap_or(500);
 
     let dims = (width * height) as usize;
     let mut x_vec = vec![0.0f64; dims];
@@ -55,17 +62,15 @@ fn run() -> ocl::Result<()> {
 
     let x_buffer = unsafe { 
         Buffer::<f64>::builder()
-        .queue(queue.clone())
-        .flags(flags::MEM_READ_WRITE)
-        .len(dims)
-        .use_host_slice(&x_vec)
-        .build().unwrap()
+            .queue(queue.clone())
+            .len(dims)
+            .use_host_slice(&x_vec)
+            .build().unwrap()
     };
 
     let y_buffer = unsafe { 
         Buffer::<f64>::builder()
             .queue(queue.clone())
-            .flags(flags::MEM_READ_WRITE)
             .len(dims)
             .use_host_slice(&y_vec)
             .build()
@@ -91,37 +96,110 @@ fn run() -> ocl::Result<()> {
         .name("mandy").arg(&x_buffer).arg(&y_buffer).arg(&max).arg(&width).arg(&dst_image)
         .build()?;
 
-    // fill x/y to Mandelbrot coordinates
-    let height_vs_width = height as f64 / width as f64;
-    let scale_h = height as f64 * 0.5 / height as f64 * 3.5 * height_vs_width * zoom;
-    let scale_w =  width as f64 * 0.5 /  width as f64 * 3.5 * zoom;
-    let left = -scale_w - mid_x;
-    let right = scale_w - mid_x;
-    let top = -scale_h - mid_y;
-    let bottom = scale_h - mid_y;
-    let step_x = (right - left) / (width as f64 - 1.0);
-    let step_y = (bottom - top) / (height as f64 - 1.0);
+    let sdl_context = sdl2::init().unwrap();
+    let video_subsystem = sdl_context.video().unwrap();
+    let window = video_subsystem.window("Mandy", width, height)
+        .position_centered()
+        .opengl()
+        .build()
+        .unwrap();
+    let mut event_pump = sdl_context.event_pump().unwrap();
+    let mut first = true;
 
-    let mut y = top;
-    for h in 0..height {
-        let mut x = left;
-        for w in 0..width {
-            let offset = (h * width + w) as usize;
-            x_vec[offset] = x;
-            y_vec[offset] = y;
-            x += step_x;
+    'running: loop {
+        let mut keypress : bool = false;
+        for event in event_pump.poll_iter() {
+            match event {
+                Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
+                    break 'running
+                },
+                Event::KeyDown { keycode: Some(Keycode::W), .. } => {
+                    mid_y += 0.05 * zoom;
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::S), .. } => {
+                    mid_y -= 0.05 * zoom;
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::A), .. } => {
+                    mid_x += 0.05 * zoom;
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::D), .. } => {
+                    mid_x -= 0.05 * zoom;
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::I), .. } => {
+                    zoom *= 0.8;
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::O), .. } => {
+                    zoom *= 1.2;
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::Equals), .. } => {
+                    max = max + 10;
+                    println!("max: {}", max);
+                    keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::Minus), .. } => {
+                    max -= 10;
+                    println!("max: {}", max);
+                    keypress = true;
+                },
+                _ => {}
+            }
         }
-        y += step_y;
+
+        if keypress || first {
+            first = false;
+            // fill x/y to Mandelbrot coordinates
+            let height_vs_width = height as f64 / width as f64;
+            let scale_h = height as f64 * 0.5 / height as f64 * 3.5 * height_vs_width * zoom;
+            let scale_w =  width as f64 * 0.5 /  width as f64 * 3.5 * zoom;
+            let left = -scale_w - mid_x;
+            let right = scale_w - mid_x;
+            let top = -scale_h - mid_y;
+            let bottom = scale_h - mid_y;
+            let step_x = (right - left) / (width as f64 - 1.0);
+            let step_y = (bottom - top) / (height as f64 - 1.0);
+
+            let mut y = top;
+            for h in 0..height {
+                let mut x = left;
+                for w in 0..width {
+                    let offset = (h * width + w) as usize;
+                    x_vec[offset] = x;
+                    y_vec[offset] = y;
+                    x += step_x;
+                }
+                y += step_y;
+            }
+
+            // run opencl kernel
+            unsafe { kernel.enq()? }
+
+            // copy results back to img
+            dst_image.read(&mut img).enq().unwrap();
+
+            let mut surface = window.surface(&event_pump).unwrap();
+            for (x, y, foo) in img.enumerate_pixels() {
+                surface.fill_rect(Rect::new(x as i32, y as i32, 1, 1), Color::RGB(foo[0], foo[1], foo[2])).unwrap();
+            }
+            surface.finish().unwrap();
+        }
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
+    // write_png(&img);
+    Ok(())
+}
 
-    unsafe { kernel.enq()? }
-    dst_image.read(&mut img).enq().unwrap();
-
+#[allow(dead_code)]
+fn write_png(img : &image::ImageBuffer<image::Rgba<u8>, Vec<u8>>) {
     let mut path = std::env::current_dir().unwrap();
     path.push("result.png");
     println!("saving image to {}", path.display());
     img.save(path.to_str().unwrap()).unwrap();
-    Ok(())
 }
 
 fn main() {

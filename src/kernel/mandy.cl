@@ -17,9 +17,7 @@ __kernel void mandy(__global double const * real0,
   }
 
   const int2 coord = (int2)(i % width, i / width);
-  //if (i / 1600 > 1190 && (i % 1600 > 1590)) {
-    const float gray = (float) count / (float) max;
-    write_imagef(dst_image, coord, (float4)(gray, gray, gray, 1.0));
-  //}
+  const float gray = (float) count / (float) max;
+  write_imagef(dst_image, coord, (float4)(gray, gray, gray, 1.0));
 }
 // vim:ft=c
