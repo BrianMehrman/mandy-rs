@@ -35,7 +35,7 @@ fn run() -> ocl::Result<()> {
     let mut mid_x = value_t!(matches, "mid_x", f64).unwrap_or(0.75);
     let mut mid_y = value_t!(matches, "mid_y", f64).unwrap_or(0.0);
     let mut zoom = value_t!(matches, "zoom", f64).unwrap_or(1.0);
-    let mut max = value_t!(matches, "max", u32).unwrap_or(500);
+    let mut max = value_t!(matches, "max", u32).unwrap_or(100);
 
     let dims = (width * height) as usize;
     let mut x_vec = vec![0.0f64; dims];
@@ -49,7 +49,9 @@ fn run() -> ocl::Result<()> {
     // (1) Define which platform and device(s) to use. Create a context,
     // queue, and program then define some dims (compare to step 1 above).
     let platform = Platform::default();
-    let device = Device::first(platform)?;
+    let device = Device::by_idx_wrap(platform, 2)?;
+
+    println!("device: {:#}", device);
     let context = Context::builder()
         .platform(platform)
         .devices(device.clone())
@@ -60,41 +62,7 @@ fn run() -> ocl::Result<()> {
         .build(&context)?;
     let queue = Queue::new(&context, device, None)?;
 
-    let x_buffer = unsafe { 
-        Buffer::<f64>::builder()
-            .queue(queue.clone())
-            .len(dims)
-            .use_host_slice(&x_vec)
-            .build().unwrap()
-    };
 
-    let y_buffer = unsafe { 
-        Buffer::<f64>::builder()
-            .queue(queue.clone())
-            .len(dims)
-            .use_host_slice(&y_vec)
-            .build()
-            .unwrap()
-    };
-
-    let mut img = image::ImageBuffer::from_pixel(width, height, image::Rgba([0, 0, 0, 255u8]));
-    let dst_image = unsafe {
-        Image::<u8>::builder()
-            .channel_order(ImageChannelOrder::Rgba)
-            .channel_data_type(ImageChannelDataType::UnormInt8)
-            .image_type(MemObjectType::Image2d)
-            .dims(&img.dimensions())
-            .use_host_slice(&img)
-            .queue(queue.clone())
-            .build().unwrap()
-    };
-
-    let kernel = Kernel::builder()
-        .program(&program)
-        .queue(queue.clone())
-        .global_work_size(dims)
-        .name("mandy").arg(&x_buffer).arg(&y_buffer).arg(&max).arg(&width).arg(&dst_image)
-        .build()?;
 
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
@@ -138,14 +106,16 @@ fn run() -> ocl::Result<()> {
                     keypress = true;
                 },
                 Event::KeyDown { keycode: Some(Keycode::Equals), .. } => {
-                    max = max + 10;
+                    max = max + 1;
                     println!("max: {}", max);
                     keypress = true;
                 },
                 Event::KeyDown { keycode: Some(Keycode::Minus), .. } => {
-                    max -= 10;
-                    println!("max: {}", max);
+                    max -= 1;
                     keypress = true;
+                },
+                Event::KeyDown { keycode: Some(Keycode::P), .. } => {
+                    // write_png(&img);
                 },
                 _ => {}
             }
@@ -176,11 +146,51 @@ fn run() -> ocl::Result<()> {
                 y += step_y;
             }
 
+            let max_adj = (1.0f64 / zoom).log10().abs() as u32 * 8;
+
+            let x_buffer = unsafe { 
+                Buffer::<f64>::builder()
+                    .queue(queue.clone())
+                    .len(dims)
+                    .use_host_slice(&x_vec)
+                    .build().unwrap()
+            };
+
+            let y_buffer = unsafe { 
+                Buffer::<f64>::builder()
+                    .queue(queue.clone())
+                    .len(dims)
+                    .use_host_slice(&y_vec)
+                    .build()
+                    .unwrap()
+            };
+
+            let mut img = image::ImageBuffer::from_pixel(width, height, image::Rgba([0, 0, 0, 255u8]));
+            let dst_image = unsafe {
+                Image::<u8>::builder()
+                    .channel_order(ImageChannelOrder::Rgba)
+                    .channel_data_type(ImageChannelDataType::UnormInt8)
+                    .image_type(MemObjectType::Image2d)
+                    .dims(&img.dimensions())
+                    .use_host_slice(&img)
+                    .queue(queue.clone())
+                    .build().unwrap()
+            };
             // run opencl kernel
+            // FIXME: we shouldn't recompile the kernel per frame
+            // It's this way because changes to `max` aren't available to the kernel
+            // for some reason.
+            let kernel = Kernel::builder()
+                .program(&program)
+                .queue(queue.clone())
+                .global_work_size(dims)
+                .name("mandy").arg(&x_buffer).arg(&y_buffer).arg(max + max_adj).arg(width).arg(&dst_image)
+                .build()?;
             unsafe { kernel.enq()? }
 
             // copy results back to img
             dst_image.read(&mut img).enq().unwrap();
+            println!("-x {} -y {} -z {} -m {}", mid_x, mid_y, zoom, max);
 
             let mut surface = window.surface(&event_pump).unwrap();
             for (x, y, foo) in img.enumerate_pixels() {
@@ -190,7 +200,6 @@ fn run() -> ocl::Result<()> {
         }
         ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
-    // write_png(&img);
     Ok(())
 }
 
